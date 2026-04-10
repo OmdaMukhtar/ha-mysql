@@ -97,7 +97,7 @@ pip3 install PyMySQL
 
 ### 1. Configure Inventory
 
-Edit `inventory/hosts.ini` with your actual IP addresses:
+Copy example-inventory.ini to inventory/hosts.ini with your actual IP addresses:
 
 ```ini
 [mysql_primary]
@@ -165,10 +165,10 @@ ansible-playbook playbooks/verify_replication.yml
 
 ## Connection Endpoints
 
-### Via ProxySQL (recommended — automatic read/write split)
+### Via ProxySQL (recommended automatic read/write split)
 
 ```bash
-# Single endpoint — ProxySQL routes automatically
+# Single endpoint ProxySQL routes automatically
 mysql -h 192.168.0.84 -P 6033 -u appuser -p appdb
 
 # ProxySQL admin console
