@@ -221,8 +221,8 @@ mysql -h 127.0.0.1 -P 6032 -u proxysql_admin -p \
 
 ## Performance Notes
 
-- Open limit soft and hard files to 65536 for MySQL processes to handle high concurrency.
-- Switch of Kernel Swappiness to 0 to prioritize MySQL performance over system caching.
+- Open limit soft and hard files to `65536` for MySQL processes to handle high concurrency.
+- Switch of Kernel Swappiness to `0` to prioritize MySQL performance over system caching.
 
 ---
 
@@ -245,7 +245,7 @@ mysql -h 127.0.0.1 -P 6032 -u proxysql_admin -p \
 | Symptom                          | Check                                                         |
 | -------------------------------- | ------------------------------------------------------------- |
 | Replica IO thread stopped        | Firewall port 3306 between primary and replicas               |
-| ProxySQL routing all to primary  | Query rules regex — `LOAD MYSQL QUERY RULES TO RUNTIME`       |
+| ProxySQL routing all to primary  | Query rules regex `LOAD MYSQL QUERY RULES TO RUNTIME`         |
 | `Access denied` through ProxySQL | User added to `mysql_users` and `LOAD MYSQL USERS TO RUNTIME` |
 | High replication lag             | `Seconds_Behind_Master` in `SHOW REPLICA STATUS`              |
 | Access denied                    | Ensure user exists in mysql_users and load to runtime         |
@@ -342,3 +342,4 @@ User: root
 - Add Ansible Vault for secure password management
 - Failover automation playbook to promote replica and reconfigure ProxySQL
 - Integrated with CI/CD pipelines for automated deployments and updates
+- Make ProxySQL high available with keepalived or similar tool
