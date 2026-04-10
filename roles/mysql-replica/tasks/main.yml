@@ -1,0 +1,94 @@
+---
+# ─── Install MySQL 8.0 ───────────────────────────────────────────────────────
+- name: Install MySQL Server 8.0
+  apt:
+    name:
+      - mysql-server
+      - mysql-client
+    state: present
+    update_cache: yes
+
+- name: Ensure MySQL is started and enabled
+  service:
+    name: mysql
+    state: started
+    enabled: yes
+
+# ─── Configure Replica my.cnf ────────────────────────────────────────────────
+- name: Deploy replica MySQL configuration
+  template:
+    src: replica_my.cnf.j2
+    dest: /etc/mysql/mysql.conf.d/mysqld.cnf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart mysql
+
+- name: Flush handlers to apply config now
+  meta: flush_handlers
+
+# ─── Secure & Root Access ────────────────────────────────────────────────────
+# - name: Set MySQL root password on replica
+#   mysql_user:
+#     name: root
+#     password: "{{ mysql_root_password }}"
+#     host_all: yes
+#     login_unix_socket: /var/run/mysqld/mysqld.sock
+#     state: present
+#   ignore_errors: true
+
+- name: Create .my.cnf for root on replica
+  template:
+    src: root_my.cnf.j2
+    dest: /root/.my.cnf
+    owner: root
+    group: root
+    mode: '0600'
+
+# ─── Load Primary Status ─────────────────────────────────────────────────────
+- name: Load primary status variables
+  include_vars:
+    file: /tmp/primary_status.yml
+
+# ─── Configure Replication ───────────────────────────────────────────────────
+- name: Stop replica if already running
+  mysql_replication:
+    mode: stopreplica
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+  ignore_errors: true
+
+- name: Configure replica to replicate from primary (GTID mode)
+  mysql_replication:
+    mode: changeprimary
+    primary_host: "{{ mysql_primary_host }}"
+    primary_port: "{{ mysql_primary_port }}"
+    primary_user: "{{ mysql_replication_user }}"
+    primary_password: "{{ mysql_replication_password }}"
+    primary_auto_position: yes
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+
+- name: Start replica
+  mysql_replication:
+    mode: startreplica
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+
+- name: Verify replica status
+  mysql_replication:
+    mode: getreplica
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+  register: replica_status
+
+- name: Assert replication is running
+  assert:
+    that:
+      - (replica_status.Replica_IO_Running | default(replica_status.Replica_IO_Running)) == "Yes"
+      - (replica_status.Replica_SQL_Running | default(replica_status.Replica_SQL_Running)) == "Yes"
+    fail_msg: >
+      Replication is NOT running!
+      IO: {{ replica_status.Replica_IO_Running | default(replica_status.Replica_IO_Running) }},
+      SQL: {{ replica_status.Replica_SQL_Running | default(replica_status.Replica_SQL_Running) }}
+    success_msg: "Replication is healthy on {{ inventory_hostname }}"

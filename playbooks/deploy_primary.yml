@@ -1,0 +1,7 @@
+---
+- name: Deploy MySQL Primary only
+  hosts: mysql_primary
+  gather_facts: true
+  roles:
+    - common
+    - mysql-primary

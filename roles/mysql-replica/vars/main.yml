@@ -1,0 +1,39 @@
+---
+# ─── MySQL Settings ───────────────────────────────────────────────
+mysql_root_password: "RootPass123!"
+mysql_replication_user: "replicator"
+mysql_replication_password: "ReplPass123!"
+mysql_port: 3306
+
+# Application user (used by ProxySQL)
+mysql_app_user: "appuser"
+mysql_app_password: "AppPass123!"
+mysql_app_database: "appdb"
+
+# ─── Replication ──────────────────────────────────────────────────
+mysql_primary_host: "192.168.0.81"
+mysql_primary_port: 3306
+
+# ─── HAProxy Settings ─────────────────────────────────────────────
+# haproxy_mysql_frontend_port: 3306          # write traffic → primary
+# haproxy_mysql_read_frontend_port: 3307     # read traffic  → replicas
+# haproxy_stats_port: 8080
+# haproxy_stats_user: "admin"
+# haproxy_stats_password: "HaproxyStats123!"
+
+# HAProxy health-check user (needs REPLICATION CLIENT on MySQL)
+# haproxy_check_user: "haproxy_check"
+# haproxy_check_password: "HaproxyCheck123!"
+
+# ─── ProxySQL Settings ────────────────────────────────────────────
+proxysql_admin_user: "proxysql_admin"
+proxysql_admin_password: "ProxyAdmin123!"
+proxysql_admin_port: 6032
+proxysql_mysql_port: 6033
+
+proxysql_monitor_user: "proxysql_monitor"
+proxysql_monitor_password: "ProxyMonitor123!"
+
+# ─── MySQL Server Groups (ProxySQL hostgroups) ────────────────────
+proxysql_writer_hostgroup: 10
+proxysql_reader_hostgroup: 20

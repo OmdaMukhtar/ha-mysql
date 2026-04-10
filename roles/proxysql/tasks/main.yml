@@ -1,0 +1,218 @@
+# ─────────────────────────────────────────────────────────────
+# Install ProxySQL
+# ─────────────────────────────────────────────────────────────
+- name: Install ProxySQL
+  apt:
+    name: proxysql
+    state: present
+    update_cache: yes
+
+
+# ─────────────────────────────────────────────────────────────
+# Deploy config
+# ─────────────────────────────────────────────────────────────
+- name: Deploy ProxySQL configuration
+  template:
+    src: proxysql.cnf.j2
+    dest: /etc/proxysql.cnf
+    owner: proxysql
+    group: proxysql
+    mode: '0640'
+
+
+# ─────────────────────────────────────────────────────────────
+# Start service
+# ─────────────────────────────────────────────────────────────
+- name: Start and enable ProxySQL
+  service:
+    name: proxysql
+    state: started
+    enabled: yes
+
+
+# ─────────────────────────────────────────────────────────────
+# Wait for admin port
+# ─────────────────────────────────────────────────────────────
+- name: Wait for ProxySQL admin port
+  wait_for:
+    host: 127.0.0.1
+    port: "{{ proxysql_admin_port }}"
+    timeout: 30
+
+
+# ─────────────────────────────────────────────────────────────
+# Clean existing servers (idempotency)
+# ─────────────────────────────────────────────────────────────
+- name: Clean existing primary server entry
+  community.mysql.mysql_query:
+    login_host: 127.0.0.1
+    login_port: "{{ proxysql_admin_port }}"
+    login_user: "{{ proxysql_admin_user }}"
+    login_password: "{{ proxysql_admin_password }}"
+    query: |
+      DELETE FROM mysql_servers
+      WHERE hostgroup_id={{ proxysql_writer_hostgroup }}
+      AND hostname='{{ mysql_primary_host }}';
+
+
+- name: Clean existing replica servers
+  community.mysql.mysql_query:
+    login_host: 127.0.0.1
+    login_port: "{{ proxysql_admin_port }}"
+    login_user: "{{ proxysql_admin_user }}"
+    login_password: "{{ proxysql_admin_password }}"
+    query: |
+      DELETE FROM mysql_servers
+      WHERE hostgroup_id={{ proxysql_reader_hostgroup }};
+
+
+# ─────────────────────────────────────────────────────────────
+# Add MySQL servers
+# ─────────────────────────────────────────────────────────────
+- name: Add primary MySQL server (writer)
+  community.mysql.mysql_query:
+    login_host: 127.0.0.1
+    login_port: "{{ proxysql_admin_port }}"
+    login_user: "{{ proxysql_admin_user }}"
+    login_password: "{{ proxysql_admin_password }}"
+    query: |
+      INSERT INTO mysql_servers (hostgroup_id, hostname, port, weight, comment)
+      VALUES ({{ proxysql_writer_hostgroup }}, '{{ mysql_primary_host }}', {{ mysql_port }}, 1000, 'primary-writer');
+
+
+- name: Add replica MySQL servers (reader)
+  community.mysql.mysql_query:
+    login_host: 127.0.0.1
+    login_port: "{{ proxysql_admin_port }}"
+    login_user: "{{ proxysql_admin_user }}"
+    login_password: "{{ proxysql_admin_password }}"
+    query: |
+      INSERT INTO mysql_servers (hostgroup_id, hostname, port, weight, comment)
+      VALUES ({{ proxysql_reader_hostgroup }}, '{{ item }}', {{ mysql_port }}, 100, 'replica-reader');
+  loop: "{{ groups['mysql_replicas'] | map('extract', hostvars, 'ansible_host') | list }}"
+
+
+# ─────────────────────────────────────────────────────────────
+# Query Rules
+# ─────────────────────────────────────────────────────────────
+- name: Remove old query rules
+  community.mysql.mysql_query:
+    login_host: 127.0.0.1
+    login_port: "{{ proxysql_admin_port }}"
+    login_user: "{{ proxysql_admin_user }}"
+    login_password: "{{ proxysql_admin_password }}"
+    query: |
+      DELETE FROM mysql_query_rules WHERE rule_id IN (10,20);
+
+
+- name: Add write routing rule
+  community.mysql.mysql_query:
+    login_host: 127.0.0.1
+    login_port: "{{ proxysql_admin_port }}"
+    login_user: "{{ proxysql_admin_user }}"
+    login_password: "{{ proxysql_admin_password }}"
+    query: |
+      INSERT INTO mysql_query_rules (rule_id, active, match_pattern, destination_hostgroup, apply, comment)
+      VALUES (10, 1, '^(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER|TRUNCATE)', {{ proxysql_writer_hostgroup }}, 1, 'writes');
+
+
+- name: Add read routing rule
+  community.mysql.mysql_query:
+    login_host: 127.0.0.1
+    login_port: "{{ proxysql_admin_port }}"
+    login_user: "{{ proxysql_admin_user }}"
+    login_password: "{{ proxysql_admin_password }}"
+    query: |
+      INSERT INTO mysql_query_rules (rule_id, active, match_pattern, destination_hostgroup, apply, comment)
+      VALUES (20, 1, '^SELECT', {{ proxysql_reader_hostgroup }}, 1, 'reads');
+
+
+# ─────────────────────────────────────────────────────────────
+# MySQL Users (ProxySQL side)
+# ─────────────────────────────────────────────────────────────
+# - name: Add application user to ProxySQL
+#   community.mysql.mysql_query:
+#     login_host: 127.0.0.1
+#     login_port: "{{ proxysql_admin_port }}"
+#     login_user: "{{ proxysql_admin_user }}"
+#     login_password: "{{ proxysql_admin_password }}"
+#     query: |
+#       INSERT INTO mysql_users (username, password, default_hostgroup, transaction_persistent, active)
+#       VALUES ('{{ mysql_app_user }}', '{{ mysql_app_password }}', {{ proxysql_writer_hostgroup }}, 1, 1);
+
+
+# ─────────────────────────────────────────────────────────────
+# Load to runtime (IMPORTANT ORDER)
+# ─────────────────────────────────────────────────────────────
+- name: Load servers to runtime
+  community.mysql.mysql_query:
+    login_host: 127.0.0.1
+    login_port: "{{ proxysql_admin_port }}"
+    login_user: "{{ proxysql_admin_user }}"
+    login_password: "{{ proxysql_admin_password }}"
+    query: LOAD MYSQL SERVERS TO RUNTIME;
+
+
+- name: Load users to runtime
+  community.mysql.mysql_query:
+    login_host: 127.0.0.1
+    login_port: "{{ proxysql_admin_port }}"
+    login_user: "{{ proxysql_admin_user }}"
+    login_password: "{{ proxysql_admin_password }}"
+    query: LOAD MYSQL USERS TO RUNTIME;
+
+
+- name: Load query rules to runtime
+  community.mysql.mysql_query:
+    login_host: 127.0.0.1
+    login_port: "{{ proxysql_admin_port }}"
+    login_user: "{{ proxysql_admin_user }}"
+    login_password: "{{ proxysql_admin_password }}"
+    query: LOAD MYSQL QUERY RULES TO RUNTIME;
+
+
+# ─────────────────────────────────────────────────────────────
+# Save to disk
+# ─────────────────────────────────────────────────────────────
+- name: Save servers to disk
+  community.mysql.mysql_query:
+    login_host: 127.0.0.1
+    login_port: "{{ proxysql_admin_port }}"
+    login_user: "{{ proxysql_admin_user }}"
+    login_password: "{{ proxysql_admin_password }}"
+    query: SAVE MYSQL SERVERS TO DISK;
+
+
+- name: Save users to disk
+  community.mysql.mysql_query:
+    login_host: 127.0.0.1
+    login_port: "{{ proxysql_admin_port }}"
+    login_user: "{{ proxysql_admin_user }}"
+    login_password: "{{ proxysql_admin_password }}"
+    query: SAVE MYSQL USERS TO DISK;
+
+
+- name: Save query rules to disk
+  community.mysql.mysql_query:
+    login_host: 127.0.0.1
+    login_port: "{{ proxysql_admin_port }}"
+    login_user: "{{ proxysql_admin_user }}"
+    login_password: "{{ proxysql_admin_password }}"
+    query: SAVE MYSQL QUERY RULES TO DISK;
+
+
+# ─────────────────────────────────────────────────────────────
+# Firewall
+# ─────────────────────────────────────────────────────────────
+- name: Allow ProxySQL MySQL port
+  ufw:
+    rule: allow
+    port: "{{ proxysql_mysql_port }}"
+    proto: tcp
+
+
+- name: Block ProxySQL admin port (security best practice)
+  ufw:
+    rule: deny
+    port: "{{ proxysql_admin_port }}"
+    proto: tcp

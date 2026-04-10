@@ -1,0 +1,43 @@
+---
+#──────────────────────────────────────────────────────────────────────────────
+# Playbook: verify-replication.yml
+# Purpose:  Check replication health across all replicas and print a summary
+#──────────────────────────────────────────────────────────────────────────────
+
+- name: Verify MySQL Replication Health
+  hosts: mysql_replicas
+  gather_facts: false
+  vars:
+    mysql_root_password: "RootPass123!"
+  tasks:
+    - name: Get replica status
+      mysql_replication:
+        mode: getreplica
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+      register: replica_status
+
+    - name: Print replication status per replica
+      debug:
+        msg:
+          - "Host             : {{ inventory_hostname }}"
+          - "IO Running       : {{ replica_status.Replica_IO_Running | default(replica_status.Slave_IO_Running) }}"
+          - "SQL Running      : {{ replica_status.Replica_SQL_Running | default(replica_status.Slave_SQL_Running) }}"
+          - "Seconds Behind   : {{ replica_status.Seconds_Behind_Source | default(replica_status.Seconds_Behind_Master) }}"
+          - "Primary Host     : {{ replica_status.Source_Host | default(replica_status.Master_Host) }}"
+          - "Replication GTID : {{ replica_status.Executed_Gtid_Set | default('N/A') }}"
+          - "Last IO Error    : {{ replica_status.Last_IO_Error | default('None') }}"
+          - "Last SQL Error   : {{ replica_status.Last_SQL_Error | default('None') }}"
+
+    - name: Assert replication is healthy
+      assert:
+        that:
+          - replica_status.Replica_IO_Running | default(replica_status.Slave_IO_Running) == "Yes"
+          - replica_status.Replica_SQL_Running | default(replica_status.Slave_SQL_Running) == "Yes"
+          - replica_status.Seconds_Behind_Source | default(replica_status.Seconds_Behind_Master) | int < 30
+        fail_msg: |
+          Replication UNHEALTHY on {{ inventory_hostname }}!
+            IO: {{ replica_status.Replica_IO_Running | default(replica_status.Slave_IO_Running) }}
+            SQL: {{ replica_status.Replica_SQL_Running | default(replica_status.Slave_SQL_Running) }}
+            Lag: {{ replica_status.Seconds_Behind_Source | default(replica_status.Seconds_Behind_Master) }}s
+        success_msg: "Replication healthy on {{ inventory_hostname }} (lag: {{ replica_status.Seconds_Behind_Source | default(replica_status.Seconds_Behind_Master) }}s)"

@@ -1,0 +1,79 @@
+---
+#──────────────────────────────────────────────────────────────────────────────
+# Playbook: failover-promote-replica.yml
+# Purpose:  Promote a replica to primary when the original primary is down.
+#
+# Usage:
+#   ansible-playbook playbooks/failover-promote-replica.yml \
+#     -e "new_primary=mysql-replica1"
+#
+# IMPORTANT: Run this ONLY after confirming the old primary is unreachable.
+#            Update inventory/hosts.ini after promotion.
+#──────────────────────────────────────────────────────────────────────────────
+
+- name: Promote replica to primary
+  hosts: "{{ new_primary }}"
+  gather_facts: true
+
+  pre_tasks:
+    - name: Confirm new_primary variable is set
+      assert:
+        that: new_primary is defined
+        fail_msg: "Must pass -e 'new_primary=<hostname>' to this playbook"
+
+  tasks:
+    - name: Stop replica threads
+      mysql_replication:
+        mode: stopreplica
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    - name: Reset replica all (clear replica config)
+      community.mysql.mysql_query:
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+        query: RESET REPLICA ALL
+
+    - name: Disable read_only and super_read_only
+      community.mysql.mysql_query:
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+        query: "SET GLOBAL read_only = 0; SET GLOBAL super_read_only = 0"
+
+    - name: Update my.cnf — disable read_only
+      lineinfile:
+        path: /etc/mysql/mysql.conf.d/mysqld.cnf
+        regexp: '^(super_)?read_only'
+        state: absent
+
+    - name: Set server-id to 1 (taking over as primary)
+      lineinfile:
+        path: /etc/mysql/mysql.conf.d/mysqld.cnf
+        regexp: '^server-id'
+        line: "server-id = 1"
+
+    - name: Restart MySQL to apply config
+      service:
+        name: mysql
+        state: restarted
+
+    - name: Verify new primary has write access
+      community.mysql.mysql_query:
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+        query: "SELECT @@read_only AS read_only, @@super_read_only AS super_read_only"
+      register: ro_status
+
+    - name: Print promotion result
+      debug:
+        msg: |
+          Promotion complete!
+            New Primary : {{ inventory_hostname }} ({{ ansible_host }})
+            read_only   : {{ ro_status.query_result[0][0].read_only }}
+            super_read_only: {{ ro_status.query_result[0][0].super_read_only }}
+
+          Next steps:
+            1. Update inventory/hosts.ini — move {{ inventory_hostname }} to [mysql_primary]
+            2. Point remaining replicas to new primary:
+               ansible-playbook playbooks/repoint-replicas.yml -e "new_primary_host={{ ansible_host }}"
+            3. Update HAProxy and ProxySQL backends accordingly

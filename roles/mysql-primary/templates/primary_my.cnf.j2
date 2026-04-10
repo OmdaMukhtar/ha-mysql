@@ -1,0 +1,45 @@
+[mysqld]
+# ─── Basic Settings ────────────────────────────────────────────────
+user                    = mysql
+pid-file                = /var/run/mysqld/mysqld.pid
+socket                  = /var/run/mysqld/mysqld.sock
+port                    = {{ mysql_port }}
+basedir                 = /usr
+datadir                 = /var/lib/mysql
+tmpdir                  = /tmp
+bind-address            = 0.0.0.0
+
+# ─── Replication (Primary) ────────────────────────────────────────
+server-id               = 1
+log_bin                 = /var/log/mysql/mysql-bin.log
+binlog_expire_logs_seconds = 604800       # 7 days
+max_binlog_size         = 100M
+binlog_format           = ROW
+log_slave_updates       = ON
+sync_binlog             = 1
+gtid_mode               = ON
+enforce_gtid_consistency = ON
+
+# ─── InnoDB ────────────────────────────────────────────────────────
+innodb_buffer_pool_size       = 1G
+innodb_log_file_size          = 256M
+innodb_flush_log_at_trx_commit = 1
+innodb_flush_method           = O_DIRECT
+innodb_file_per_table         = ON
+
+# ─── Performance ──────────────────────────────────────────────────
+max_connections         = 500
+thread_cache_size       = 50
+table_open_cache        = 4000
+
+# ─── Character Set ────────────────────────────────────────────────
+character-set-server    = utf8mb4
+collation-server        = utf8mb4_unicode_ci
+
+# ─── Slow Query Log ───────────────────────────────────────────────
+slow_query_log          = ON
+slow_query_log_file     = /var/log/mysql/slow.log
+long_query_time         = 2
+
+# ─── Error Log ────────────────────────────────────────────────────
+log_error               = /var/log/mysql/error.log

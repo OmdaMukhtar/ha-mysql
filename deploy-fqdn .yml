@@ -1,0 +1,10 @@
+---
+- name: Deploy hostnames to all server
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Set FQDN for all servers in /etc/hosts
+      lineinfile:
+        name: /etc/hosts
+        line: "{{ ansible_facts.default_ipv4.address }} {{ ansible_facts.hostname }}.example.com {{ inventory_hostname }}"
+        # state: absent

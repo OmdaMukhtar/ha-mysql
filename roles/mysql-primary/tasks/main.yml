@@ -1,0 +1,132 @@
+---
+# ─── Install MySQL 8.0 ───────────────────────────────────────────────────────
+- name: Update apt cache
+  apt:
+    update_cache: yes
+
+- name: Install MySQL Server
+  apt:
+    name:
+      - mysql-server
+      - mysql-client
+    state: present
+
+- name: Ensure MySQL is running
+  service:
+    name: mysql
+    state: started
+    enabled: yes
+
+# ─── Configure Primary my.cnf ────────────────────────────────────────────────
+- name: Deploy primary MySQL configuration
+  template:
+    src: primary_my.cnf.j2
+    dest: /etc/mysql/mysql.conf.d/mysqld.cnf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart mysql
+
+- name: Flush handlers to apply config now
+  meta: flush_handlers
+
+# ─── Secure Installation ─────────────────────────────────────────────────────
+- name: Set MySQL root password
+  mysql_user:
+    name: root
+    password: "{{ mysql_root_password }}"
+    host_all: yes
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+    state: present
+  ignore_errors: true
+
+- name: Create .my.cnf for root
+  template:
+    src: root_my.cnf.j2
+    dest: /root/.my.cnf
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Remove anonymous users
+  mysql_user:
+    name: ''
+    host_all: yes
+    state: absent
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+
+- name: Remove test database
+  mysql_db:
+    name: test
+    state: absent
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+
+# ─── Create Application Database ─────────────────────────────────────────────
+- name: Create application database
+  mysql_db:
+    name: "{{ mysql_app_database }}"
+    state: present
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+
+- name: Create application user
+  mysql_user:
+    name: "{{ mysql_app_user }}"
+    password: "{{ mysql_app_password }}"
+    priv: "{{ mysql_app_database }}.*:ALL"
+    host: "%"
+    state: present
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+
+# ─── Replication User ─────────────────────────────────────────────────────────
+- name: Create replication user
+  mysql_user:
+    name: "{{ mysql_replication_user }}"
+    password: "{{ mysql_replication_password }}"
+    priv: "*.*:REPLICATION SLAVE"
+    host: "%"
+    state: present
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+
+# # ─── HAProxy Check User ───────────────────────────────────────────────────────
+# - name: Create HAProxy health-check user
+#   mysql_user:
+#     name: "{{ haproxy_check_user }}"
+#     password: "{{ haproxy_check_password }}"
+#     priv: "*.*:REPLICATION CLIENT"
+#     host: "%"
+#     state: present
+#     login_user: root
+#     login_password: "{{ mysql_root_password }}"
+
+# ─── ProxySQL Monitor User ────────────────────────────────────────────────────
+- name: Create ProxySQL monitor user
+  mysql_user:
+    name: "{{ proxysql_monitor_user }}"
+    password: "{{ proxysql_monitor_password }}"
+    priv: "*.*:REPLICATION CLIENT,PROCESS"
+    host: "%"
+    state: present
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+
+# ─── Get Primary Status (for replica setup) ──────────────────────────────────
+- name: Get primary binary log status
+  mysql_replication:
+    mode: getprimary
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+  register: primary_status
+
+- name: Save primary status to file (for replicas)
+  copy:
+    content: |
+      mysql_primary_log_file: {{ primary_status.File }}
+      mysql_primary_log_pos: {{ primary_status.Position }}
+    dest: /tmp/primary_status.yml
+  delegate_to: localhost
+  become: false

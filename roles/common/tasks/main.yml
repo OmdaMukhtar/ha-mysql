@@ -1,0 +1,48 @@
+---
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install common packages
+  apt:
+    name:
+      - curl
+      - wget
+      - gnupg
+      - python3-pymysql
+      - python3-pip
+      - net-tools
+      - ufw
+    state: present
+
+- name: Set timezone to UTC
+  timezone:
+    name: UTC
+
+- name: Disable swap
+  command: swapoff -a
+  changed_when: false
+
+- name: Remove swap from fstab
+  replace:
+    path: /etc/fstab
+    regexp: '^([^#].*\s+swap\s+.*)$'
+    replace: '# \1'
+
+- name: Set vm.swappiness to 0
+  sysctl:
+    name: vm.swappiness
+    value: '0'
+    state: present
+    reload: yes
+
+- name: Increase open file limits
+  blockinfile:
+    path: /etc/security/limits.conf
+    block: |
+      mysql soft nofile 65535
+      mysql hard nofile 65535
+      * soft nofile 65535
+      * hard nofile 65535
+    marker: "# {mark} ANSIBLE MANAGED FILE LIMITS"

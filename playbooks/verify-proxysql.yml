@@ -1,0 +1,71 @@
+---
+#──────────────────────────────────────────────────────────────────────────────
+# Playbook: verify-proxysql.yml
+# Purpose:  Check ProxySQL backend server status and query routing rules
+#──────────────────────────────────────────────────────────────────────────────
+
+- name: Verify ProxySQL Configuration and Backend Health
+  hosts: proxysql
+  gather_facts: false
+  vars:
+    proxysql_admin_port: 6032
+    proxysql_admin_user: "proxysql_admin"
+    proxysql_admin_password: "ProxyAdmin123!"
+  tasks:
+    - name: Query ProxySQL — backend server status
+      community.mysql.mysql_query:
+        login_host: 127.0.0.1
+        login_port: "{{ proxysql_admin_port }}"
+        login_user: "{{ proxysql_admin_user }}"
+        login_password: "{{ proxysql_admin_password }}"
+        query: |
+          SELECT hostgroup_id, hostname, port, status, weight, comment
+          FROM runtime_mysql_servers
+          ORDER BY hostgroup_id, hostname
+      register: backend_status
+
+    - name: Print backend server status
+      debug:
+        msg: "HG={{ item.hostgroup_id }} | {{ item.hostname }}:{{ item.port }} | {{ item.status }} | weight={{ item.weight }} | {{ item.comment }}"
+      loop: "{{ backend_status.query_result[0] }}"
+
+    - name: Query ProxySQL — active query rules
+      community.mysql.mysql_query:
+        login_host: 127.0.0.1
+        login_port: "{{ proxysql_admin_port }}"
+        login_user: "{{ proxysql_admin_user }}"
+        login_password: "{{ proxysql_admin_password }}"
+        query: |
+          SELECT rule_id, active, match_pattern, destination_hostgroup, comment
+          FROM runtime_mysql_query_rules
+          ORDER BY rule_id
+      register: query_rules
+
+    - name: Print active query rules
+      debug:
+        msg: "Rule {{ item.rule_id }} | {{ item.match_pattern }} → HG{{ item.destination_hostgroup }} | {{ item.comment }}"
+      loop: "{{ query_rules.query_result[0] }}"
+
+    - name: Query ProxySQL — connection pool stats
+      community.mysql.mysql_query:
+        login_host: 127.0.0.1
+        login_port: "{{ proxysql_admin_port }}"
+        login_user: "{{ proxysql_admin_user }}"
+        login_password: "{{ proxysql_admin_password }}"
+        query: |
+          SELECT hostgroup, srv_host, status, ConnUsed, ConnFree, Latency_us
+          FROM stats_mysql_connection_pool
+          ORDER BY hostgroup
+      register: pool_stats
+
+    - name: Print connection pool stats
+      debug:
+        msg: "HG={{ item.hostgroup }} | {{ item.srv_host }} | {{ item.status }} | used={{ item.ConnUsed }} free={{ item.ConnFree }} latency={{ item.Latency_us }}µs"
+      loop: "{{ pool_stats.query_result[0] }}"
+
+    - name: Assert all backends are ONLINE
+      assert:
+        that: item.status == "ONLINE"
+        fail_msg: "Backend {{ item.srv_host }} in HG{{ item.hostgroup }} is {{ item.status }}!"
+        success_msg: "{{ item.srv_host }} (HG{{ item.hostgroup }}) is ONLINE"
+      loop: "{{ pool_stats.query_result[0] }}"

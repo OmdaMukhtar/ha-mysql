@@ -1,0 +1,28 @@
+---
+# MySQL Settings
+mysql_root_password: "RootPass123!"
+mysql_replication_user: "replicator"
+mysql_replication_password: "ReplPass123!"
+mysql_port: 3306
+
+# Application user (used by ProxySQL)
+mysql_app_user: "appuser"
+mysql_app_password: "AppPass123!"
+mysql_app_database: "appdb"
+
+# Replication
+mysql_primary_host: "192.168.0.81"
+mysql_primary_port: 3306
+
+# ProxySQL Settings
+proxysql_admin_user: "proxysql_admin"
+proxysql_admin_password: "ProxyAdmin123!"
+proxysql_admin_port: 6032
+proxysql_mysql_port: 6033
+
+proxysql_monitor_user: "proxysql_monitor"
+proxysql_monitor_password: "ProxyMonitor123!"
+
+# MySQL Server Groups (ProxySQL hostgroups)
+proxysql_writer_hostgroup: 10
+proxysql_reader_hostgroup: 20

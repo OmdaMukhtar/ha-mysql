@@ -1,0 +1,63 @@
+---
+#──────────────────────────────────────────────────────────────────────────────
+# Playbook: repoint-replicas.yml
+# Purpose:  After a failover, point all remaining replicas at the new primary.
+#
+# Usage:
+#   ansible-playbook playbooks/repoint-replicas.yml \
+#     -e "new_primary_host=192.168.0.82"
+#──────────────────────────────────────────────────────────────────────────────
+
+- name: Repoint replicas to new primary
+  hosts: mysql_replicas
+  gather_facts: false
+
+  pre_tasks:
+    - name: Confirm new_primary_host is set
+      assert:
+        that: new_primary_host is defined
+        fail_msg: "Must pass -e 'new_primary_host=<IP>' to this playbook"
+
+    - name: Skip the host that was just promoted
+      meta: end_host
+      when: ansible_host == new_primary_host
+
+  tasks:
+    - name: Stop replica threads
+      mysql_replication:
+        mode: stopreplica
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+      ignore_errors: true
+
+    - name: Repoint to new primary (GTID auto-position)
+      mysql_replication:
+        mode: changeprimary
+        primary_host: "{{ new_primary_host }}"
+        primary_port: "{{ mysql_primary_port }}"
+        primary_user: "{{ mysql_replication_user }}"
+        primary_password: "{{ mysql_replication_password }}"
+        primary_auto_position: yes
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    - name: Start replica
+      mysql_replication:
+        mode: startreplica
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    - name: Verify replication to new primary
+      mysql_replication:
+        mode: getreplica
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+      register: new_status
+
+    - name: Show new replication status
+      debug:
+        msg:
+          - "Replica     : {{ inventory_hostname }}"
+          - "New Primary : {{ new_status.Master_Host }}"
+          - "IO Running  : {{ new_status.Replica_IO_Running }}"
+          - "SQL Running : {{ new_status.Replica_SQL_Running }}"

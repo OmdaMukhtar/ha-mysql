@@ -1,0 +1,87 @@
+# ─── OS / System Files ───────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Editor / IDE ────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── Logs ────────────────────────────────────────────────────────
+*.log
+logs/
+*.out
+*.err
+
+# ─── Environment / Secrets ───────────────────────────────────────
+.env
+.env.*
+*.env
+*.key
+*.pem
+*.crt
+*.csr
+secrets.yml
+vault.yml
+
+# ─── Ansible ─────────────────────────────────────────────────────
+*.retry
+ansible.cfg
+.hosts
+inventory.ini
+inventory.yml
+inventory/*
+# Ignore dynamic inventory/cache
+*.cache
+*.json
+
+# ─── MySQL / Database ────────────────────────────────────────────
+*.sql
+*.sql.gz
+*.dump
+*.db
+*.sqlite
+
+# ─── ProxySQL ────────────────────────────────────────────────────
+proxysql.db
+proxysql.log
+
+# ─── Backups ─────────────────────────────────────────────────────
+backup/
+backups/
+*.bak
+*.tar
+*.tar.gz
+*.zip
+
+# ─── Kubernetes / DevOps ─────────────────────────────────────────
+.kube/
+kubeconfig
+*.kubeconfig
+
+# ─── Terraform (if used later) ───────────────────────────────────
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+
+# ─── Python (Ansible dependencies, scripts) ──────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.venv/
+
+# ─── Node (if frontend/tools added) ──────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── Misc ───────────────────────────────────────────────────────
+tmp/
+temp/
+.cache/

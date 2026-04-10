@@ -1,0 +1,8 @@
+---
+- name: Deploy MySQL Replicas only
+  hosts: mysql_replicas
+  gather_facts: true
+  serial: 1
+  roles:
+    - common
+    - mysql-replica

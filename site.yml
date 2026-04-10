@@ -1,0 +1,44 @@
+---
+#──────────────────────────────────────────────────────────────────────────────
+# MySQL HA Stack — Master Playbook
+#
+# Architecture:
+#   Application → ProxySQL (TCP 6033, auto read/write split)
+#                → MySQL Primary  (writes, HG10)
+#                → MySQL Replicas (reads,  HG20)
+#
+# Run order:
+#   1. common       — all hosts (OS baseline)
+#   2. mysql-primary
+#   3. mysql-replica
+#   4. proxysql
+#──────────────────────────────────────────────────────────────────────────────
+
+# ── PLAY 1: Baseline all hosts ────────────────────────────────────────────────
+- name: Apply common baseline to all hosts
+  hosts: all
+  gather_facts: true
+  roles:
+    - common
+
+# ── PLAY 2: Configure MySQL Primary ──────────────────────────────────────────
+- name: Configure MySQL Primary node
+  hosts: mysql_primary
+  gather_facts: true
+  roles:
+    - mysql-primary
+
+# ── PLAY 3: Configure MySQL Replicas ─────────────────────────────────────────
+- name: Configure MySQL Replica nodes
+  hosts: mysql_replicas
+  gather_facts: true
+  serial: 1           # configure one replica at a time
+  roles:
+    - mysql-replica
+
+# ── PLAY 4: Configure ProxySQL ───────────────────────────────────────────────
+- name: Configure ProxySQL query router
+  hosts: proxysql
+  gather_facts: true
+  roles:
+    - proxysql

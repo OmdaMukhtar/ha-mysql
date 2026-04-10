@@ -1,0 +1,7 @@
+---
+- name: Deploy ProxySQL only
+  hosts: proxysql
+  gather_facts: true
+  roles:
+    - common
+    - proxysql
