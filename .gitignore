@@ -32,7 +32,7 @@ ansible.cfg
 .hosts
 inventory.ini
 inventory.yml
-inventory/*
+inventory/hosts.ini
 # Ignore dynamic inventory/cache
 *.cache
 *.json
