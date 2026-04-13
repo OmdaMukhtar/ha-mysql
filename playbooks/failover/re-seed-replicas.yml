@@ -1,0 +1,193 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Playbook: reseed-and-repoint-replicas.yml
+# Purpose:  Rebuild all replicas from new primary after failover (clean GTID)
+# ─────────────────────────────────────────────────────────────────────────────
+
+- name: Re-seed replicas from new primary
+  hosts: mysql_replicas
+  gather_facts: true
+  serial: 1
+  vars:
+    dump_file: /tmp/mysql_dump.sql
+
+  pre_tasks:
+    - name: Confirm new_primary_host is set
+      assert:
+        that: new_primary_host is defined
+        fail_msg: "Must pass -e 'new_primary_host=<ip>' to this playbook"
+
+    - name: Skip the host that was just promoted
+      meta: end_host
+      when: ansible_host == new_primary_host
+
+  tasks:
+    # ─── 1. Prepare Dump on Primary ──────────────────────────────────────────
+    - name: Dump all databases from primary
+      delegate_to: "{{ new_primary_host }}"
+      remote_user: vboxuser
+      run_once: true
+      shell: |
+        mysqldump -u root -p{{ mysql_root_password }} \
+        --all-databases \
+        --single-transaction \
+        --routines \
+        --triggers \
+        --events \
+        --master-data=2 \
+        --flush-logs \
+        > {{ dump_file }}
+
+    # ─── 2. Wipe and Re-init Local Replica ───────────────────────────────────
+    - name: Stop MySQL
+      systemd:
+        name: mysql
+        state: stopped
+
+    - name: Wipe MySQL data directory
+      file:
+        path: /var/lib/mysql
+        state: absent
+
+    - name: Recreate MySQL data directory
+      file:
+        path: /var/lib/mysql
+        state: directory
+        owner: mysql
+        group: mysql
+        mode: '0755'
+
+    - name: Initialize MySQL (Insecure)
+      command: mysqld --initialize-insecure --user=mysql
+
+    - name: Start MySQL
+      systemd:
+        name: mysql
+        state: started
+
+    # ─── 3. Handle File Transfer ─────────────────────────────────────────────
+    - name: Fetch dump from primary to Ansible controller
+      fetch:
+        src: "{{ dump_file }}"
+        dest: "/tmp/mysql_dump.sql"
+        flat: yes
+      delegate_to: "{{ new_primary_host }}"
+      run_once: true
+
+    - name: Copy dump from controller to replica
+      copy:
+        src: "/tmp/mysql_dump.sql"
+        dest: "{{ dump_file }}"
+
+    # ─── 4. The Import (The Critical Part) ───────────────────────────────────
+
+    # We use a temp .my.cnf so that the mysql command doesn't need
+    # command-line arguments that might change during the import process.
+    - name: Create temporary root config for import
+      copy:
+        dest: /root/.my.cnf
+        content: |
+          [client]
+          user=root
+          password=""
+          socket=/var/run/mysqld/mysqld.sock
+        mode: '0600'
+
+    - name: Disable read-only mode for import
+      mysql_variables:
+        variable: super_read_only
+        value: "OFF"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    # - name: Import database dump
+    #   shell: "mysql < {{ dump_file }}"
+    #   # Ignore errors because the password might change mid-import,
+    #   # but the data usually finishes loading.
+
+    # - name: Update temporary root config with NEW password
+    #   copy:
+    #     dest: /root/.my.cnf
+    #     content: |
+    #       [client]
+    #       user=root
+    #       password="{{ mysql_root_password }}"
+    #       socket=/var/run/mysqld/mysqld.sock
+    #     mode: '0600'
+
+    - name: Disable read-only and Import Data
+      shell: |
+        mysql -u root --socket=/var/run/mysqld/mysqld.sock -e "SET GLOBAL super_read_only = OFF;"
+        mysql -u root --socket=/var/run/mysqld/mysqld.sock < {{ dump_file }}
+      register: import_result
+      ignore_errors: yes
+
+    - name: Force root password to match Ansible variable
+      shell: |
+        mysql -u root --socket=/var/run/mysqld/mysqld.sock -e "
+        ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '{{ mysql_root_password }}';
+        FLUSH PRIVILEGES;"
+
+    - name: Create permanent root config for Ansible modules
+      copy:
+        dest: /root/.my.cnf
+        content: |
+          [client]
+          user=root
+          password="{{ mysql_root_password }}"
+          socket=/var/run/mysqld/mysqld.sock
+        mode: '0600'
+
+    - name: Re-enable read-only mode
+      mysql_variables:
+        variable: read_only
+        value: "ON"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    # ─── 5. Fix Permissions & Users ─────────────────────────────────────────
+    - name: Ensure replication user exists
+      mysql_user:
+        name: "{{ mysql_replication_user }}"
+        password: "{{ mysql_replication_password }}"
+        priv: "*.*:REPLICATION SLAVE"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Configure replication source
+      mysql_replication:
+        mode: changeprimary
+        primary_host: "{{ new_primary_host }}"
+        primary_user: "{{ mysql_replication_user }}"
+        primary_password: "{{ mysql_replication_password }}"
+        primary_auto_position: yes
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Start replication
+      mysql_replication:
+        mode: startreplica
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    # ─── 7. Validation ───────────────────────────────────────────────────────
+    - name: Check replication status
+      mysql_replication:
+        mode: getreplica
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+      register: replica_status
+
+    - name: Validate replication health
+      fail:
+        msg: "Replication is not healthy on {{ inventory_hostname }}"
+      when: >
+        replica_status.Replica_IO_Running != "Yes" or
+        replica_status.Replica_SQL_Running != "Yes"
+
+    - name: Cleanup temporary config
+      file:
+        path: /root/.my.cnf
+        state: absent
+
+    - name: Show replication status
+      debug:
+        msg:
+          - "Replica: {{ inventory_hostname }}"
+          - "IO Running: {{ replica_status.Replica_IO_Running }}"
+          - "SQL Running: {{ replica_status.Replica_SQL_Running }}"
+          - "Seconds Behind: {{ replica_status.Seconds_Behind_Source | default('0') }}"

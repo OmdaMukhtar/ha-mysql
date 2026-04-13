@@ -1,0 +1,34 @@
+- name: 1. Extract last octet from ansible_host
+  set_fact:
+    mysql_server_id: "{{ ansible_host.split('.')[-1] | int }}"
+
+- name: 2. Find current server-id in MySQL config
+  shell: "grep -E '^server-id' /etc/mysql/my.cnf /etc/my.cnf /etc/mysql/mysql.conf.d/mysqld.cnf 2>/dev/null || true"
+  register: current_server_id
+  changed_when: false
+
+- name: 3. Debug current server-id
+  debug:
+    var: current_server_id.stdout
+
+- name: 4. Update server-id in MySQL config
+  lineinfile:
+    path: /etc/mysql/mysql.conf.d/mysqld.cnf
+    regexp: '^server-id'
+    line: "server-id = {{ mysql_server_id }}"
+    backup: yes
+
+- name: 5. If server-id does not exist, add it
+  lineinfile:
+    path: /etc/mysql/mysql.conf.d/mysqld.cnf
+    line: "server-id = {{ mysql_server_id }}"
+    insertafter: '^\[mysqld\]'
+    state: present
+  when:
+  - current_server_id.stdout == "server-id = {{ mysql_server_id }}"
+  - current_server_id.stdout == ""
+
+- name: restart mysql
+  service:
+    name: mysql
+    state: restarted

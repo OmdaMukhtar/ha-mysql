@@ -1,8 +1,0 @@
----
-# Reconfigure only MySQL Primary
-- name: Reconfigure MySQL Primary
-  hosts: mysql_primary
-  gather_facts: true
-  roles:
-    - common
-    - mysql-primary

@@ -1,0 +1,79 @@
+---
+- name: Setup SSH trust and DNS resolution across cluster
+  hosts: all
+  become: true
+
+  vars:
+    ssh_user: vboxuser
+
+  tasks:
+    - name: Ensure .ssh directory exists
+      file:
+        path: "~{{ ssh_user }}/.ssh"
+        state: directory
+        owner: "{{ ssh_user }}"
+        group: "{{ ssh_user }}"
+        mode: '0700'
+      become_user: "{{ ssh_user }}"
+
+    - name: Generate SSH key if not exists
+      openssh_keypair:
+        path: "~{{ ssh_user }}/.ssh/id_rsa"
+        type: rsa
+        size: 2048
+      become_user: "{{ ssh_user }}"
+
+    - name: Read public key
+      slurp:
+        src: "~{{ ssh_user }}/.ssh/id_rsa.pub"
+      register: pubkey
+      become_user: "{{ ssh_user }}"
+
+    - name: Save public key as fact
+      set_fact:
+        my_pubkey: "{{ pubkey.content | b64decode }}"
+
+    - name: Build authorized_keys content
+      set_fact:
+        authorized_keys_content: |
+          {% for host in groups['all'] %}
+          {{ hostvars[host]['my_pubkey'] }}
+          {% endfor %}
+
+    - name: Deploy authorized_keys
+      copy:
+        content: "{{ authorized_keys_content }}"
+        dest: "~{{ ssh_user }}/.ssh/authorized_keys"
+        owner: "{{ ssh_user }}"
+        group: "{{ ssh_user }}"
+        mode: '0600'
+      become_user: "{{ ssh_user }}"
+
+    - name: Disable SSH host key checking
+      copy:
+        dest: "~{{ ssh_user }}/.ssh/config"
+        content: |
+          Host *
+            StrictHostKeyChecking no
+            UserKnownHostsFile=/dev/null
+        owner: "{{ ssh_user }}"
+        group: "{{ ssh_user }}"
+        mode: '0644'
+
+    - name: Build hosts entries
+      set_fact:
+        hosts_entries: |
+          {% for host in groups['all'] %}
+          {{ hostvars[host]['ansible_facts']['default_ipv4']['address'] }} {{ hostvars[host]['ansible_facts']['fqdn'] }} {{ host }}
+          {% endfor %}
+
+    - name: Update /etc/hosts
+      copy:
+        dest: /etc/hosts
+        content: |
+          127.0.0.1 localhost
+          ::1 localhost
+          {{ hosts_entries }}
+        owner: root
+        group: root
+        mode: '0644'

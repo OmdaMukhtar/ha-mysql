@@ -1,0 +1,103 @@
+- name: Update ProxySQL writer hostgroup to new primary
+  hosts: proxysql
+  gather_facts: no
+  pre_tasks:
+  - name: Confirm new_primary is set
+    assert:
+      that: new_primary is defined
+      fail_msg: "Must pass -e 'new_primary=<ip>' to this playbook"
+
+  - name: Skip the host that was just promoted
+    meta: end_host
+    when: ansible_host == new_primary
+
+  tasks:
+  - name: Remove old primary from writer hostgroup
+    mysql_query:
+      login_host: 127.0.0.1
+      login_port: "{{ proxysql_admin_port }}"
+      login_user: "{{ proxysql_admin_user }}"
+      login_password: "{{ proxysql_admin_password }}"
+      query: >
+        DELETE FROM mysql_servers
+        WHERE hostgroup_id = {{ proxysql_writer_hostgroup }}
+
+  - name: Remove any old entries from reader hostgroup
+    mysql_query:
+      login_host: 127.0.0.1
+      login_port: "{{ proxysql_admin_port }}"
+      login_user: "{{ proxysql_admin_user }}"
+      login_password: "{{ proxysql_admin_password }}"
+      query: >
+        DELETE FROM mysql_servers
+        WHERE hostgroup_id = {{ proxysql_reader_hostgroup }}
+
+  - name: Add new primary to writer hostgroup
+    mysql_query:
+      login_host: 127.0.0.1
+      login_port: "{{ proxysql_admin_port }}"
+      login_user: "{{ proxysql_admin_user }}"
+      login_password: "{{ proxysql_admin_password }}"
+      query: >
+        INSERT INTO mysql_servers (hostgroup_id, hostname, port, weight, comment)
+        VALUES ({{ proxysql_writer_hostgroup }},
+                '{{ new_primary }}',
+                {{ mysql_port }}, 1000, 'new-primary-after-failover')
+
+  - name: Add replica MySQL servers (reader)
+    mysql_query:
+      login_host: 127.0.0.1
+      login_port: "{{ proxysql_admin_port }}"
+      login_user: "{{ proxysql_admin_user }}"
+      login_password: "{{ proxysql_admin_password }}"
+      query: |
+        INSERT INTO mysql_servers (hostgroup_id, hostname, port, weight, comment)
+        VALUES ({{ proxysql_reader_hostgroup }}, '{{ item }}', {{ mysql_port }}, 100, 'replica-reader');
+    loop: "{{ groups['mysql_replicas'] | map('extract', hostvars, 'ansible_host') | list }}"
+
+  - name: Load MySQL servers to runtime
+    mysql_query:
+      login_host: 127.0.0.1
+      login_port: "{{ proxysql_admin_port }}"
+      login_user: "{{ proxysql_admin_user }}"
+      login_password: "{{ proxysql_admin_password }}"
+      query: LOAD MYSQL SERVERS TO RUNTIME
+
+  - name: Save MySQL servers to disk
+    mysql_query:
+      login_host: 127.0.0.1
+      login_port: "{{ proxysql_admin_port }}"
+      login_user: "{{ proxysql_admin_user }}"
+      login_password: "{{ proxysql_admin_password }}"
+      query: SAVE MYSQL SERVERS TO DISK
+
+  - name: Regenerate proxysql.cnf from template
+    template:
+      src: ../../roles/proxysql/templates/proxysql.cnf.j2
+      dest: /etc/proxysql.cnf
+      backup: yes
+    notify: Restart ProxySQL
+
+  - name: Verify ProxySQL server table after failover
+    mysql_query:
+      login_host: 127.0.0.1
+      login_port: "{{ proxysql_admin_port }}"
+      login_user: "{{ proxysql_admin_user }}"
+      login_password: "{{ proxysql_admin_password }}"
+      query: >
+        SELECT hostgroup_id, hostname, port, status, comment
+        FROM mysql_servers ORDER BY hostgroup_id
+    register: proxysql_servers
+
+  - name: Print next steps
+    debug:
+      msg:
+      - "ProxySQL updated. Next step:"
+      - "ansible-playbook playbooks/failover/repoint-replicas.yml \
+          -e \"new_primary_host={{ new_primary }}\""
+
+  handlers:
+    - name: Restart ProxySQL
+      service:
+        name: proxysql
+        state: restarted

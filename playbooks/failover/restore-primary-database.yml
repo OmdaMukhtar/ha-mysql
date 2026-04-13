@@ -1,0 +1,100 @@
+---
+- name: Restore old primary from backup (FULL CLEAN RESET)
+  hosts: mysql_primary
+  gather_facts: false
+
+  tasks:
+  - name: Upload backup file to target
+    copy:
+      src: "{{ backup_src }}"
+      dest: "{{ backup_dest }}"
+
+  - name: Stop replication if running
+    mysql_replication:
+      mode: stopreplica
+      login_user: root
+      login_password: "{{ mysql_root_password }}"
+    ignore_errors: true
+
+  - name: Disable read-only mode
+    mysql_variables:
+      variable: "{{ item }}"
+      value: "OFF"
+      login_user: root
+      login_password: "{{ mysql_root_password }}"
+    loop:
+      - read_only
+      - super_read_only
+
+  - name: Reset GTID and replication state
+    mysql_query:
+      query: |
+        RESET MASTER;
+      login_user: root
+      login_password: "{{ mysql_root_password }}"
+
+  - name: Get list of non-system databases
+    mysql_query:
+      query: "SHOW DATABASES;"
+      login_user: root
+      login_password: "{{ mysql_root_password }}"
+    register: dbs
+
+  - name: Filter user databases
+    set_fact:
+      user_dbs: >-
+        {{ dbs.query_result[0]
+          | map(attribute='Database')
+          | difference(['mysql','information_schema','performance_schema','sys']) }}
+
+  - name: Drop user databases
+    mysql_db:
+      name: "{{ item }}"
+      state: absent
+      login_user: root
+      login_password: "{{ mysql_root_password }}"
+    loop: "{{ user_dbs }}"
+
+  - name: Decompress backup file
+    command: gunzip -f "{{ backup_dest }}"
+    args:
+      creates: "{{ decompressed_backup }}"
+
+  - name: Verify decompressed backup exists
+    stat:
+      path: "{{ decompressed_backup }}"
+    register: backup_file
+
+  - name: Fail if backup file is missing or empty
+    fail:
+      msg: "Backup file missing or empty"
+    when: not backup_file.stat.exists or backup_file.stat.size == 0
+
+  - name: Restore all databases from backup
+    mysql_db:
+      name: all
+      state: import
+      target: "{{ decompressed_backup }}"
+      login_user: root
+      login_password: "{{ mysql_root_password }}"
+
+  - name: Ensure node is writable (primary)
+    mysql_variables:
+      variable: "{{ item }}"
+      value: "OFF"
+      login_user: root
+      login_password: "{{ mysql_root_password }}"
+    loop:
+      - read_only
+      - super_read_only
+
+  - name: Verify MySQL is operational
+    mysql_query:
+      query: "SHOW DATABASES;"
+      login_user: root
+      login_password: "{{ mysql_root_password }}"
+    register: dbs
+
+  - name: Show restored databases
+    debug:
+      var: dbs.query_result

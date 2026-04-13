@@ -211,8 +211,8 @@
     proto: tcp
 
 
-- name: Block ProxySQL admin port (security best practice)
-  ufw:
-    rule: deny
-    port: "{{ proxysql_admin_port }}"
-    proto: tcp
+# - name: Block ProxySQL admin port (security best practice)
+#   ufw:
+#     rule: deny
+#     port: "{{ proxysql_admin_port }}"
+#     proto: tcp

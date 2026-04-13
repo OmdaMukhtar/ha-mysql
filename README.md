@@ -55,6 +55,11 @@ mysql-ha-ansible/
 - [ProxySQL query routing rules (regex patterns, hostgroups)](#proxysql-query-routing-rules)
 - [Verifying the stack (replication lag, ProxySQL stats)](#verifying-the-stack)
 - [Troubleshooting common issues (replication, connectivity, ProxySQL routing)](#troubleshooting-common-issues)
+- [Performance notes (open files limit, swappiness)](#performance-notes)
+- [Security notes (Ansible Vault, read-only replicas, ProxySQL admin access)](#security-notes)
+- [Incidents and failover scenarios (simulate primary failure, promote replica)](#incidents-and-failover-scenarios)
+  - [First scenario simulate primary failure and promote replica](#first-scenario-simulate-primary-failure-and-promote-replica)
+  - [Second scenario simulate primary failure and promote replica with backup/restore](#second-scenario-simulate-primary-failure-and-promote-replica-with-backuprestore)
 - [Recommended next steps (SSL, monitoring, backup, failover automation)](#recommended-next-steps)
 
 ---
@@ -136,6 +141,9 @@ ansible all -m ping
 ### 4. Deploy Everything
 
 ```bash
+# Deploy DNS resolution and SSH trust across cluster (optional but recommended)
+ansible-playbook playbooks/cluster-ssh-and-dns.yml
+
 # Full stack deployment
 ansible-playbook site.yml
 
@@ -334,6 +342,277 @@ Port: 3306
 User: root
 ```
 
+---
+
+## Incidents and Failover Scenarios
+
+1. Simulate primary failure and promote replica (covered in the first failover scenario above)
+2. Simulate primary failure and promote replica with backup/restore (covered in the second failover scenario below)
+3. Simulate replica failure and rebuild replica from primary
+4. Simulate ProxySQL failure and recover ProxySQL with minimal downtime
+
+[back to top](#mysql-ha-stack-ansible-automation)
+
+---
+
+## First Scenario Simulate Primary Failure and Promote Replica
+
+1. Create a table `todos` with some test data on primary to verify replication and failover later:
+
+```bash
+ansible-playbook playbooks/create-todos-table.yml
+```
+
+- It creates a table called `todos` in `appdb` database.
+- It also inserts some test data into the `todos` table to verify replication and failover later.
+
+2. Stop MySQL on primary to simulate failure:
+
+```bash
+sudo systemctl stop mysql
+```
+
+3. Run failover playbook to promote replica and reconfigure ProxySQL:
+
+```bash
+ansible-playbook playbooks/failover/promote-replica.yml -e new_primary=replica1
+```
+
+- Update inventory/hosts.ini to move primary from old primary to new primary group:
+
+```ini
+[mysql_primary]
+replica1 ansible_host=192.168.0.82 ansible_user=vboxuser ansible_become=true # new promoted primary
+
+[mysql_replicas]
+primary ansible_host=192.168.0.81 ansible_user=vboxuser ansible_become=true # Old primary
+replica2 ansible_host=192.168.0.83 ansible_user=vboxuser ansible_become=true
+```
+
+- Update ProxySQL configuration to point to new primary and remove old primary from hostgroup 10 (primary group) and add it to hostgroup 20 (replica group) by executing the following playbook:
+
+```bash
+ansible-playbook playbooks/failover/update-proxysql-hostgroups.yml \
+-e new_primary=replica1
+```
+
+- Re-pointing to new primary and reconfiguring replicas to replicate from new primary by executing the following playbooks:
+
+```bash
+ansible-playbook playbooks/failover/repoint-replicas.yml \
+-e "new_primary_host=192.168.0.82"
+```
+
+- Show replication node list on New primary to confirm it is now the primary and old primary is now a replica:
+
+```bash
+# SSH into new primary
+ssh vboxuser@192.168.0.82
+
+# Connect to ProxySQL admin interface
+mysql -u proxysql_admin -p -P 6032 -h 192.168.0.84
+
+SELECT hostgroup_id, hostname, port, status, weight
+FROM mysql_servers;
+```
+
+4. Write data to new primary using ProxySQL endpoint and verify it replicates to the remaining replica:
+
+- Connect to ProxySQL and run a write query:
+
+```bash
+mysql -u proxysql_admin -p -P 6032 -h 192.168.0.84
+```
+
+- Run a test insert query to confirm the new primary is accepting writes:
+
+```sql
+USE appdb;
+INSERT INTO todos (title, description) VALUES ('Failover Test', 'Testing failover scenario');
+```
+
+- Check replication status on the remaining replica to confirm it is receiving updates from the new primary:
+  - Connect to replica2 directly:
+
+  ```bash
+  mysql -u root -p -h 192.168.0.83 #(replica2)
+  ```
+
+  - Then run the following query to check replication status:
+
+  ```sql
+  SHOW REPLICA STATUS\G
+  ```
+
+  check and observe the `Seconds_Behind_Master` and `Last_Error` fields to confirm replication is healthy and up to date.
+
+5. Verify new primary and replication health:
+
+```bash
+ansible-playbook playbooks/verify_replication.yml
+```
+
+6. Put back old primary to be reachable by executing
+
+```bash
+sudo systemctl start mysql
+```
+
+7. Update `server-id` on old primary to avoid conflicts and reconfigure it as a replica of the new primary:
+
+- Edit inventory/hosts.ini to move broken replica(old primary) to broken_replica group:
+
+```ini
+[broken_replica]
+primary ansible_host=192.168.0.81 ansible_user=vboxuser ansible_become=true # old primary
+```
+
+- Then run the following playbook to update `server-id`, reconfigure replication, and add it back to ProxySQL:
+
+```bash
+ansible-playbook playbooks/failover/rebuild-broken-replicas.yml \
+-e "new_primary=192.168.0.82"
+```
+
+What this playbook does:
+
+- Updates `server-id` in MySQL config to a unique value (e.g. `server-id=3`) to avoid conflicts with the new primary
+- Configures the old primary as a replica of the new primary
+- Deletes old replication data and starts replication from scratch to ensure it is fully synced and healthy before being added back to ProxySQL
+- Re-adds the old primary to ProxySQL as a replica once it is fully synced and healthy
+- Provides final confirmation of the old primary being rebuilt and replicating from the new primary
+
+### Troubleshooting Failover Issues
+
+- Check on the old primary if MySQL is stopped and not accepting connections:
+
+```bash
+mysql -u root -p -h 192.168.0.81
+```
+
+- Run Query to check replication status on failed replica (old primary):
+- Connect to old primary directly:
+
+```bash
+mysql -u root -p -h 192.168.0.81 #(old primary)
+```
+
+- Then run the following query to check replication status:
+
+```sql
+SELECT * FROM performance_schema.replication_applier_status_by_worker\G;
+```
+
+[back to top](#mysql-ha-stack-ansible-automation)
+
+---
+
+## Second Scenario Simulate Primary Failure and Promote Replica with Backup/Restore
+
+1. Backup primary database before stopping MySQL to ensure we have a recent backup in case of any issues during failover:
+
+```bash
+ansible-playbook playbooks/backup-primary-database.yml
+```
+
+2. Stop MySQL on primary to simulate failure:
+
+```bash
+sudo systemctl stop mysql
+```
+
+3. Check replication status on replicas to confirm they are healthy and up to date before promoting:
+
+```bash
+ansible-playbook playbooks/verify-replication.yml
+```
+
+4. Promote replica(replica2) and reconfigure ProxySQL:
+
+```bash
+ansible-playbook playbooks/failover/promote-replica.yml -e new_primary=replica2
+```
+
+5. Update inventory/hosts.ini to move primary from old primary to new primary group:
+
+```ini
+[mysql_primary]
+replica2 ansible_host=192.168.0.82
+
+[broken_replica]
+primary ansible_host=192.168.0.81 ansible_user=vboxuser ansible_become=true # old primary
+```
+
+6. Restore backup of old primary to new primary to ensure it is fully synced and healthy before being added back to ProxySQL:
+
+```bash
+ansible-playbook playbooks/failover/restore-primary-database.yml
+```
+
+7. Update ProxySQL configuration to point to new primary and remove old primary from hostgroup 10 (primary group) and add it to hostgroup 20 (replica group) by executing the following playbook:
+
+```bash
+ansible-playbook playbooks/failover/update-proxysql-hostgroups.yml \
+-e new_primary=192.168.0.82
+```
+
+8. Reset all replicas data
+
+```bash
+ansible-playbook playbooks/failover/reset-replicas.yml
+```
+
+9. Re-build all replicas get fresh data from new primary and add them back to ProxySQL:
+
+```bash
+ansible-playbook playbooks/failover/rebuild-broken-replicas.yml \
+-e "new_primary=192.168.0.82"
+```
+
+10. Import backup database to new primary and restore it to ensure it is fully synced and healthy before being added back to ProxySQL:
+
+- Before that delete all binlog files on new primary to avoid any conflicts with the restored data:
+
+```bash
+# SSH into new primary
+ssh vboxuser@192.168.0.82
+
+# Delete all binlog files
+sudo rm -rf /var/lib/mysql/mysql-bin.*
+```
+
+- Then run the following playbook to restore the backup database to new primary:
+
+```bash
+ansible-playbook playbooks/failover/restore-primary-database.yml
+```
+
+11. Re-seed replica from primary
+
+```bash
+ansible-playbook playbooks/failover/re-seed-replicas.yml \
+-e "new_primary_host=192.168.0.82"
+```
+
+12. Write data to new primary using ProxySQL endpoint and verify it replicates to the remaining replica:
+
+- Connect to ProxySQL and run a write query:
+
+```bash
+mysql -u proxysql_admin -p -P 6032 -h 192.168.0.84
+```
+
+- Run a test insert query to confirm the new primary is accepting writes:
+
+```sql
+USE appdb;
+INSERT INTO todos (title, description) VALUES ('Failover Test', 'Testing second failover scenario');
+```
+
+[back to top](#mysql-ha-stack-ansible-automation)
+
+---
+
 ## Recommended Next Steps
 
 - Add SSL certification mTLS between ProxySQL and MySQL nodes
@@ -343,3 +622,9 @@ User: root
 - Failover automation playbook to promote replica and reconfigure ProxySQL
 - Integrated with CI/CD pipelines for automated deployments and updates
 - Make ProxySQL high available with keepalived or similar tool
+- Encrypt MySQL Data at rest with LUKS or filesystem encryption
+- Use better way for server-id management on replicas (e.g. dynamic generation based on inventory hostname) to avoid conflicts during failover and recovery
+
+[back to top](#mysql-ha-stack-ansible-automation)
+
+---

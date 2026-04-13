@@ -1,0 +1,23 @@
+---
+- name: Deploy MySQL Replicas only
+  hosts: mysql_replicas
+  gather_facts: true
+  serial: 1
+  tasks:
+  - name: Stop replication
+    mysql_replication:
+      mode: stopreplica
+      login_user: root
+      login_password: "{{ mysql_root_password }}"
+
+  - name: Reset replication
+    mysql_replication:
+      mode: resetreplicaall
+      login_user: root
+      login_password: "{{ mysql_root_password }}"
+
+  - name: Reset GTID
+    mysql_query:
+      query: RESET MASTER;
+      login_user: root
+      login_password: "{{ mysql_root_password }}"

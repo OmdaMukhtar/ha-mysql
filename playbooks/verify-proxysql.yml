@@ -46,7 +46,7 @@
         msg: "Rule {{ item.rule_id }} | {{ item.match_pattern }} → HG{{ item.destination_hostgroup }} | {{ item.comment }}"
       loop: "{{ query_rules.query_result[0] }}"
 
-    - name: Query ProxySQL — connection pool stats
+    - name: Query ProxySQL to get connection pool stats
       community.mysql.mysql_query:
         login_host: 127.0.0.1
         login_port: "{{ proxysql_admin_port }}"

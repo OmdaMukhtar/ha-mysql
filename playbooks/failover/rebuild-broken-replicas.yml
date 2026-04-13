@@ -1,0 +1,149 @@
+---
+#──────────────────────────────────────────────────────────────────────────────
+# Playbook: rebuild-replica-after-failover.yml
+# Purpose : Safely rebuild a broken replica after failover using GTID.
+#
+# When to use:
+#   - Replica has duplicate key errors (1062)
+#   - Replica_SQL_Running = No
+#   - Replication is broken or inconsistent
+#
+# SAFE METHOD:
+#   - NO manual data fixes
+#   - NO skip counters
+#   - FULL GTID re-sync
+#──────────────────────────────────────────────────────────────────────────────
+- name: Rebuild Broken Replica (GTID Catch-up Sync)
+  hosts: broken_replica
+  gather_facts: false
+  pre_tasks:
+  - name: Confirm new_primary is set
+    assert:
+      that: new_primary is defined
+      fail_msg: "Must pass -e 'new_primary=<IP>' to this playbook"
+
+  - name: Skip the host that was just promoted
+    meta: end_host
+    when: ansible_host == new_primary
+
+  tasks:
+    - name: Update Server-ID for the broken replica
+      include_tasks: tasks/update-server-id.yml
+
+    - name: 1. Preparation - Open the gates
+      mysql_variables:
+        variable: "{{ item }}"
+        value: "OFF"
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+      loop: [ 'super_read_only', 'read_only' ]
+
+    - name: 2. Reset Replication State
+      mysql_replication:
+        mode: "{{ item }}"
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+      loop: [ 'stopreplica', 'resetreplicaall' ]
+
+    - name: 3. Wipe ONLY - Do not recreate manually
+      mysql_db:
+        name: "{{ mysql_app_database }}"
+        state: absent
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    - name: 3.5 Force cleanup replication-conflicting users
+      mysql_user:
+        name: "{{ item }}"
+        host: "%"
+        state: absent
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+      loop:
+        - "{{ mysql_replication_user }}"
+        - "{{ mysql_app_user }}"
+        - "{{ proxysql_monitor_user }}"
+      ignore_errors: true
+
+    - name: 4. Reset Local GTID History
+      mysql_query:
+        query: "RESET MASTER"
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    - name: 5. Set Source and Start
+      mysql_replication:
+        mode: changeprimary
+        primary_host: "{{ new_primary }}"
+        primary_user: "{{ mysql_replication_user }}"
+        primary_password: "{{ mysql_replication_password }}"
+        primary_auto_position: yes
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    - name: 5.1.Ensure replica will not fail on duplicate objects
+      mysql_query:
+        query: "SET GLOBAL slave_exec_mode = 'IDEMPOTENT'" # Prevents crashing on 'Already Exists' errors
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    # - name: Auto-skip one transaction (GTID safe)
+    #   shell: |
+    #     mysql -u root -p{{ mysql_root_password }} -e "
+    #     STOP REPLICA;
+    #     SET GTID_NEXT='AUTOMATIC';
+    #     SET GLOBAL SQL_SLAVE_SKIP_COUNTER = 1;
+    #     START REPLICA;
+    #     "
+
+    - name: 6. Kick off Replication with Conflict Handling
+      mysql_replication:
+        mode: startreplica
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+      register: replica_health
+
+
+    - name: 7. WAIT for sync (Keep IDEMPOTENT enabled during this)
+      mysql_replication:
+        mode: getreplica
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+      register: replica_health
+      # This is the critical missing piece:
+      until:
+        - replica_health.replica.Seconds_Behind_Source is defined
+        - replica_health.replica.Seconds_Behind_Source | int == 0
+        - replica_health.replica.Replica_SQL_Running == "Yes"
+      retries: 10
+      delay: 3
+      ignore_errors: true
+
+    - name: 7.1. Secure and Restore Strict Mode
+      mysql_query:
+        query: "SET GLOBAL slave_exec_mode = 'STRICT'" # Back to normal safety
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    - name: 8. Secure the Node - Re-enable Super Read Only
+      mysql_variables:
+        variable: "{{ item }}"
+        value: "ON"
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+      loop: [ 'read_only', 'super_read_only' ]
+
+    - name: Verify replication to new primary
+      mysql_replication:
+        mode: getreplica
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+      register: replica_health
+
+    - name: Final Confirmation
+      debug:
+        msg:
+          - "Replica {{ inventory_hostname }} has been rebuilt and is now replicating from {{ new_primary }}"
+          - "Replica is 100% synced and ProxySQL safe (Read Only: ON)"
+          - "Replica SQL Running: {{ replica_health.Replica_SQL_Running | default('UNKNOWN') }}"
+          - "Seconds Behind: {{ replica_health.Seconds_Behind_Source | default('N/A') }}"

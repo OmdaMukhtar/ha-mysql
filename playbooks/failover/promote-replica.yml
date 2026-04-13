@@ -16,10 +16,10 @@
   gather_facts: true
 
   pre_tasks:
-    - name: Confirm new_primary variable is set
-      assert:
-        that: new_primary is defined
-        fail_msg: "Must pass -e 'new_primary=<hostname>' to this playbook"
+  - name: Confirm new_primary variable is set
+    assert:
+      that: new_primary is defined
+      fail_msg: "Must pass -e 'new_primary=<hostname>' to this playbook"
 
   tasks:
     - name: Stop replica threads
@@ -34,13 +34,19 @@
         login_password: "{{ mysql_root_password }}"
         query: RESET REPLICA ALL
 
-    - name: Disable read_only and super_read_only
+    - name: Disable read_only
       community.mysql.mysql_query:
         login_user: root
         login_password: "{{ mysql_root_password }}"
-        query: "SET GLOBAL read_only = 0; SET GLOBAL super_read_only = 0"
+        query: "SET GLOBAL read_only = 0"
 
-    - name: Update my.cnf — disable read_only
+    - name: Disable super_read_only
+      community.mysql.mysql_query:
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+        query: "SET GLOBAL super_read_only = 0"
+
+    - name: Update my.cnf to disable read_only
       lineinfile:
         path: /etc/mysql/mysql.conf.d/mysqld.cnf
         regexp: '^(super_)?read_only'
@@ -66,14 +72,18 @@
 
     - name: Print promotion result
       debug:
-        msg: |
-          Promotion complete!
-            New Primary : {{ inventory_hostname }} ({{ ansible_host }})
-            read_only   : {{ ro_status.query_result[0][0].read_only }}
-            super_read_only: {{ ro_status.query_result[0][0].super_read_only }}
-
-          Next steps:
-            1. Update inventory/hosts.ini — move {{ inventory_hostname }} to [mysql_primary]
-            2. Point remaining replicas to new primary:
-               ansible-playbook playbooks/repoint-replicas.yml -e "new_primary_host={{ ansible_host }}"
-            3. Update HAProxy and ProxySQL backends accordingly
+        msg:
+          - "========================================"
+          - " Promotion Complete"
+          - "----------------------------------------"
+          - "New Primary        : {{ inventory_hostname }} ({{ ansible_host }})"
+          - "read_only          : {{ ro_status.query_result[0][0].read_only }}"
+          - "super_read_only    : {{ ro_status.query_result[0][0].super_read_only }}"
+          - "----------------------------------------"
+          - " Next Steps:"
+          - "1. Update inventory:"
+          - "   Move {{ inventory_hostname }} to [mysql_primary]"
+          - "2. Repoint replicas:"
+          - "   ansible-playbook playbooks/failover/update-proxysql-hostgroups.yml \\"
+          - "     -e \"new_primary={{ ansible_host }}\""
+          - "========================================"

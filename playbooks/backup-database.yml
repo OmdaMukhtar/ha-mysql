@@ -1,0 +1,70 @@
+- name: Backup MySQL database on new primary
+  hosts: mysql_primary
+  gather_facts: true
+  tasks:
+  - name: Ensure backup directory exists
+    file:
+      path: /tmp/backups
+      state: directory
+
+  - name: Generate backup filename
+    set_fact:
+      backup_file: "/tmp/backups/primary_backup_{{ inventory_hostname }}_{{ ansible_date_time.iso8601 }}.sql"
+
+  - name: Dump all databases
+    community.mysql.mysql_db:
+      state: dump
+      name: all
+      target: "{{ backup_file }}"
+      login_user: root
+      login_password: "{{ mysql_root_password }}"
+      single_transaction: yes
+      dump_extra_args: "--set-gtid-purged=OFF"
+
+  - name: Compress backup
+    archive:
+      path: "{{ backup_file }}"
+      dest: "{{ backup_file }}.gz"
+      format: gz
+
+  - name: Remove uncompressed file
+    file:
+      path: "{{ backup_file }}"
+      state: absent
+
+  - name: Show backup file path
+    debug:
+      msg: "Backup created at {{ backup_file }}.gz"
+
+  - name: Verify backup file exists
+    stat:
+      path: "{{ backup_file }}.gz"
+    register: backup_file_stats
+
+  - name: Fail if backup file was not created
+    fail:
+      msg: "Backup file was not created successfully"
+    when: not backup_file_stats.stat.exists or backup_file_stats.stat.size == 0
+
+  - name: Upload Backup to S3
+    amazon.aws.s3_object:
+      bucket: "{{ aws_s3_bucket }}"
+      object: "primary_backups/{{ inventory_hostname }}_{{ ansible_date_time.iso8601 }}.sql.gz"
+      src: "{{ backup_file }}.gz"
+      mode: put
+      encrypt: yes
+      aws_access_key: "{{ aws_access_key }}"
+      aws_secret_key: "{{ aws_secret_key }}"
+    retries: 3
+    delay: 5
+    when: upload_to_s3 | default(false)
+
+  - name: download backup to control machine
+    fetch:
+      src: "{{ backup_file }}.gz"
+      dest: "/tmp/backups/"
+      flat: yes
+
+  - name: Backup downloaded to control machine
+    debug:
+      msg: "Backup downloaded to /tmp/backups/{{ inventory_hostname }}_{{ ansible_date_time.iso8601 }}.sql.gz"

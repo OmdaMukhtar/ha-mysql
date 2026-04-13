@@ -1,9 +1,0 @@
----
-# Reconfigure only MySQL Replicas
-- name: Reconfigure MySQL Replicas
-  hosts: mysql_replicas
-  gather_facts: true
-  serial: 1
-  roles:
-    - common
-    - mysql-replica

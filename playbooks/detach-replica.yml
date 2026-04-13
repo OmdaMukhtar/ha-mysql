@@ -1,0 +1,71 @@
+---
+- name: Detach MySQL node from replication (make it standalone writable)
+  hosts: broken_replica
+  become: true
+  gather_facts: false
+
+  tasks:
+
+    # ─────────────────────────────────────────────
+    # 1. Stop replication (if running)
+    # ─────────────────────────────────────────────
+    - name: Stop replication
+      community.mysql.mysql_replication:
+        mode: stopreplica
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+      ignore_errors: true
+
+    # ─────────────────────────────────────────────
+    # 2. Remove replication configuration
+    # ─────────────────────────────────────────────
+    - name: Remove replication configuration
+      community.mysql.mysql_replication:
+        mode: resetreplicaall
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+      ignore_errors: true
+
+    # ─────────────────────────────────────────────
+    # 3. Enable writes (disable read-only)
+    # ─────────────────────────────────────────────
+    - name: Disable read_only and super_read_only
+      community.mysql.mysql_variables:
+        variable: "{{ item }}"
+        value: "OFF"
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+      loop:
+        - read_only
+        - super_read_only
+
+    # ─────────────────────────────────────────────
+    # 4. Verify node is writable
+    # ─────────────────────────────────────────────
+    - name: Check read_only
+      community.mysql.mysql_query:
+        query: "SHOW VARIABLES LIKE 'read_only';"
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+      register: ro
+
+    - name: Check super_read_only
+      community.mysql.mysql_query:
+        query: "SHOW VARIABLES LIKE 'super_read_only';"
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+      register: sro
+
+    - name: Display var sro
+      debug:
+        var: sro
+    # ─────────────────────────────────────────────
+    # 5. Final confirmation
+    # ─────────────────────────────────────────────
+    - name: Final confirmation
+      debug:
+        msg:
+          - "Node {{ inventory_hostname }} is no longer a replica"
+          - "You can now create/drop databases normally"
+          - "read_only = {{ ro.query_result[0].Value }}"
+          - "super_read_only = {{ sro.query_result[0].Value }}"

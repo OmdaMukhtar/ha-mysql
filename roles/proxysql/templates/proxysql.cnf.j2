@@ -16,55 +16,57 @@ admin_variables =
 
 mysql_variables =
 {
-    threads                 = 4
-    max_connections         = 2048
-    default_query_delay     = 0
-    default_query_timeout   = 36000000
-    have_compress           = true
-    poll_timeout            = 2000
-    interfaces              = "0.0.0.0:{{ proxysql_mysql_port }}"
-    default_schema          = "information_schema"
-    stacksize               = 1048576
-    server_version          = "8.0.32"
-    connect_timeout_server  = 3000
-    monitor_username        = "{{ proxysql_monitor_user }}"
-    monitor_password        = "{{ proxysql_monitor_password }}"
-    monitor_history         = 600000
-    monitor_connect_interval = 60000
-    monitor_ping_interval   = 10000
-    monitor_read_only_interval  = 1500
-    monitor_read_only_timeout   = 500
-    ping_interval_server_msec   = 120000
-    ping_timeout_server         = 500
-    commands_stats          = true
-    sessions_sort           = true
-    connect_retries_on_failure  = 10
+    threads                         = 8
+    max_connections                 = 4096
+
+    default_query_delay             = 0
+    default_query_timeout           = 36000000
+
+    have_compress                   = true
+    poll_timeout                    = 1000
+
+    interfaces                      = "0.0.0.0:{{ proxysql_mysql_port }}"
+    default_schema                  = "information_schema"
+
+    stacksize                       = 1048576
+    server_version                  = "8.0.32"
+
+    connect_timeout_server          = 1000
+    connect_retries_on_failure      = 3
+
+    # ─── MONITOR SETTINGS (CRITICAL FOR FAILOVER SPEED) ───
+    monitor_username                = "{{ proxysql_monitor_user }}"
+    monitor_password                = "{{ proxysql_monitor_password }}"
+
+    monitor_history                 = 600000
+
+    monitor_connect_interval       = 5000
+    monitor_ping_interval          = 2000
+    monitor_read_only_interval     = 2000
+    monitor_read_only_timeout      = 800
+
+    # ─── SERVER HEALTH CHECKS ───
+    ping_interval_server_msec      = 10000
+    ping_timeout_server            = 1000
+
+    # ─── PERFORMANCE / OPS ───
+    commands_stats                 = true
+    sessions_sort                  = true
 }
 
 # ─── MySQL Servers ────────────────────────────────────────────────
 mysql_servers =
 (
+    {% for host in groups['mysql_primary'] + groups['mysql_replicas'] %}
     {
-        address     = "{{ mysql_primary_host }}"
-        port        = {{ mysql_port }}
-        hostgroup   = {{ proxysql_writer_hostgroup }}
-        status      = "ONLINE"
-        weight      = 1000
-        compression = 0
-        comment     = "primary-writer"
+        hostname            = "{{ hostvars[host]['ansible_host'] }}"
+        port                = {{ mysql_port }}
+        hostgroup          = {{ proxysql_reader_hostgroup if host in groups['mysql_replicas'] else proxysql_writer_hostgroup }}
+        max_connections     = 100
+        max_replication_lag = 100
+        comment             = "{{ host }} ({{ 'replica' if host in groups['mysql_replicas'] else 'primary' }})"
     },
-{% for host in groups['mysql_replicas'] %}
-    {
-        address     = "{{ hostvars[host]['ansible_host'] }}"
-        port        = {{ mysql_port }}
-        hostgroup   = {{ proxysql_reader_hostgroup }}
-        status      = "ONLINE"
-        weight      = 100
-        compression = 0
-        comment     = "replica-reader-{{ loop.index }}"
-    }{% if not loop.last %},{% endif %}
-
-{% endfor %}
+    {% endfor %}
 )
 
 # ─── MySQL Users ─────────────────────────────────────────────────

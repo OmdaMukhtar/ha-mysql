@@ -9,9 +9,10 @@ mysql_port: 3306
 mysql_app_user: "appuser"
 mysql_app_password: "AppPass123!"
 mysql_app_database: "appdb"
+mysql_app_test_table: "todos"
 
 # Replication
-mysql_primary_host: "192.168.0.81"
+mysql_primary_host: "192.168.0.82"
 mysql_primary_port: 3306
 
 # ProxySQL Settings
@@ -26,3 +27,15 @@ proxysql_monitor_password: "ProxyMonitor123!"
 # MySQL Server Groups (ProxySQL hostgroups)
 proxysql_writer_hostgroup: 10
 proxysql_reader_hostgroup: 20
+
+# AWS Credentials (if needed for backup/restore tasks)
+aws_access_key: "{{ lookup('env', 'AWS_ACCESS_KEY') }}"
+aws_secret_key: "{{ lookup('env', 'AWS_SECRET_KEY') }}"
+aws_region: "us-east-1"
+aws_s3_bucket: "my-mysql-backups"
+
+
+# Backup/Restore Settings
+backup_src: /tmp/backups/primary_backup_replica2_2026-04-13T09:59:41Z.sql.gz
+backup_dest: /tmp/backup.sql.gz
+decompressed_backup: /tmp/backup.sql

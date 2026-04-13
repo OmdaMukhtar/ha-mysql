@@ -1,0 +1,86 @@
+---
+- name: Completely remove MySQL from server (FULL PURGE)
+  hosts: broken_replica
+  become: true
+  gather_facts: false
+
+  vars:
+    mysql_packages:
+      - mysql-server
+      - mysql-client
+      - mysql-common
+      - mysql-server-core-*
+      - mysql-client-core-*
+
+    mysql_paths:
+      - /etc/mysql
+      - /var/lib/mysql
+      - /var/log/mysql
+      - /var/run/mysqld
+
+  tasks:
+
+    # ─────────────────────────────────────────────
+    # 1. Stop MySQL service if running
+    # ─────────────────────────────────────────────
+    - name: Stop MySQL service
+      service:
+        name: mysql
+        state: stopped
+      ignore_errors: true
+
+    # ─────────────────────────────────────────────
+    # 2. Kill any remaining MySQL processes (safety)
+    # ─────────────────────────────────────────────
+    - name: Kill any remaining MySQL processes
+      shell: "pkill -9 mysqld || true"
+
+    # ─────────────────────────────────────────────
+    # 3. Purge MySQL packages
+    # ─────────────────────────────────────────────
+    - name: Purge MySQL packages
+      apt:
+        name: "{{ mysql_packages }}"
+        state: absent
+        purge: yes
+        autoremove: yes
+        force_apt_get: yes
+
+    # ─────────────────────────────────────────────
+    # 4. Remove leftover directories
+    # ─────────────────────────────────────────────
+    - name: Remove MySQL directories
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ mysql_paths }}"
+
+    # ─────────────────────────────────────────────
+    # 5. Clean apt cache
+    # ─────────────────────────────────────────────
+    - name: Clean apt cache
+      apt:
+        autoclean: yes
+
+    # ─────────────────────────────────────────────
+    # 6. Ensure dpkg is consistent
+    # ─────────────────────────────────────────────
+    - name: Fix broken packages if any
+      command: dpkg --configure -a
+      register: dpkg_fix
+      changed_when: false
+      failed_when: false
+
+    # ─────────────────────────────────────────────
+    # 7. Final verification
+    # ─────────────────────────────────────────────
+    - name: Verify MySQL is removed
+      command: which mysql
+      register: mysql_check
+      ignore_errors: true
+
+    - name: Show result
+      debug:
+        msg:
+          - "MySQL binary present: {{ mysql_check.rc == 0 }}"
+          - "MySQL has been fully removed from {{ inventory_hostname }}"

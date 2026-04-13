@@ -1,0 +1,30 @@
+---
+- name: Create todos table and insert sample data
+  hosts: mysql_primary
+  gather_facts: false
+  tasks:
+  - name: Create todos table
+    mysql_query:
+      login_host: "{{ inventory_hostname }}"
+      login_user: root
+      login_password: "{{ mysql_root_password }}"
+      query: |
+        CREATE TABLE IF NOT EXISTS {{ mysql_app_database }}.{{ mysql_app_test_table }} (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          title VARCHAR(255) NOT NULL,
+          description TEXT,
+          completed BOOLEAN NOT NULL DEFAULT FALSE,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        );
+
+  - name: Insert sample data into todos table
+    mysql_query:
+      login_host: "{{ inventory_hostname }}"
+      login_user: root
+      login_password: "{{ mysql_root_password }}"
+      query: |
+        INSERT INTO {{ mysql_app_database }}.{{ mysql_app_test_table }} (title, description, completed) VALUES
+        ('Buy groceries', 'Get milk, bread, and eggs', FALSE),
+        ('Finish Ansible project', 'Complete the failover playbook', FALSE),
+        ('Call Alice', 'Discuss the upcoming meeting', TRUE);

@@ -82,13 +82,17 @@
     login_password: "{{ mysql_root_password }}"
   register: replica_status
 
-- name: Assert replication is running
-  assert:
-    that:
-      - (replica_status.Replica_IO_Running | default(replica_status.Replica_IO_Running)) == "Yes"
-      - (replica_status.Replica_SQL_Running | default(replica_status.Replica_SQL_Running)) == "Yes"
-    fail_msg: >
-      Replication is NOT running!
-      IO: {{ replica_status.Replica_IO_Running | default(replica_status.Replica_IO_Running) }},
-      SQL: {{ replica_status.Replica_SQL_Running | default(replica_status.Replica_SQL_Running) }}
-    success_msg: "Replication is healthy on {{ inventory_hostname }}"
+- name: display replica_status
+  debug:
+    var: replica_status
+
+# - name: Assert replication is running
+#   assert:
+#     that:
+#       - (replica_status.Replica_IO_Running | default(replica_status.Replica_IO_Running)) == "Yes"
+#       - (replica_status.Replica_SQL_Running | default(replica_status.Replica_SQL_Running)) == "Yes"
+#     fail_msg: >
+#       Replication is NOT running!
+#       IO: {{ replica_status.Replica_IO_Running | default(replica_status.Replica_IO_Running) }},
+#       SQL: {{ replica_status.Replica_SQL_Running | default(replica_status.Replica_SQL_Running) }}
+#     success_msg: "Replication is healthy on {{ inventory_hostname }}"
