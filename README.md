@@ -615,16 +615,16 @@ INSERT INTO todos (title, description) VALUES ('Failover Test', 'Testing second 
 
 ## Recommended Next Steps
 
-- [] Add SSL certification mTLS between ProxySQL and MySQL nodes
-- [] Add monitoring with Prometheus + Grafana
+- [ ] Add SSL certification mTLS between ProxySQL and MySQL nodes
+- [ ] Add monitoring with Prometheus + Grafana
 - [x] Add backup playbook with `mysqldump` or `xtrabackup` and upload to remote storage(AWS S3)
-- [] Add Ansible Vault for secure password management
+- [ ] Add Ansible Vault for secure password management
 - [x] Manual Failover using playbook to promote replica and reconfigure ProxySQL
-- [] Failover automation playbook to promote replica and reconfigure ProxySQL
-- [] Integrated with CI/CD pipelines for automated deployments and updates
-- [] Make ProxySQL high available with keepalived or similar tool
-- [] Encrypt MySQL Data at rest with LUKS or filesystem encryption
-- [] Use better way for server-id management on replicas (e.g. dynamic generation based on inventory hostname) to avoid conflicts during failover and recovery []
+- [ ] Failover automation playbook to promote replica and reconfigure ProxySQL
+- [ ] Integrated with CI/CD pipelines for automated deployments and updates
+- [ ] Make ProxySQL high available with keepalived or similar tool
+- [ ] Encrypt MySQL Data at rest with LUKS or filesystem encryption
+- [ ] Use better way for server-id management on replicas (e.g. dynamic generation based on inventory hostname) to avoid conflicts during failover and recovery []
 
 [back to top](#mysql-ha-stack-ansible-automation)
 
